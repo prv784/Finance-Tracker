@@ -2,7 +2,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 
 // Vite env vars must be prefixed with VITE_
-const BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
+const BASE = import.meta.env.VITE_API_URL || '/api';
 
 const api = axios.create({ baseURL: BASE, headers: { 'Content-Type': 'application/json' }, timeout: 30000 });
 
