@@ -1,0 +1,44 @@
+databases:
+  - name: finance-tracker-db
+    databaseName: finance_tracker
+    user: postgres
+    plan: free
+
+services:
+  - type: web
+    name: finance-tracker-backend
+    env: docker
+    dockerfilePath: Dockerfile
+    dockerContext: backend
+    plan: free
+    envVars:
+      - key: DB_HOST
+        fromDatabase:
+          name: finance-tracker-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: finance-tracker-db
+          property: port
+      - key: DB_NAME
+        fromDatabase:
+          name: finance-tracker-db
+          property: database
+      - key: DB_USERNAME
+        fromDatabase:
+          name: finance-tracker-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: finance-tracker-db
+          property: password
+      - key: JWT_SECRET
+        generateValue: true
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: MAIL_USERNAME
+        sync: false
+      - key: MAIL_PASSWORD
+        sync: false
+      - key: FRONTEND_URL
+        value: https://finance-tracker-phi-green.vercel.app

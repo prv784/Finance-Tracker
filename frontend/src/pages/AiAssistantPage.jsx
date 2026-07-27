@@ -115,7 +115,7 @@ function AnalysisTab() {
   if (loading) return (
       <div className="flex flex-col items-center justify-center h-72 gap-4">
         <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-        <p className="text-gray-500 text-sm">Gemini 3.5 Engine processing spending history layers…</p>
+        <p className="text-gray-500 text-sm">Gemini 2.5 Engine processing spending history layers…</p>
       </div>
   );
 
@@ -169,7 +169,7 @@ function AnalysisTab() {
         </div>
 
         <div className="p-5 bg-indigo-50/40 border-l-4 border-indigo-600 rounded-r-2xl">
-          <p className="text-xs font-bold text-indigo-700 uppercase tracking-wide mb-2">📝 Gemini 3.5 Analysis Summary</p>
+          <p className="text-xs font-bold text-indigo-700 uppercase tracking-wide mb-2">📝 Gemini 2.5 Analysis Summary</p>
           <p className="text-gray-800 leading-relaxed text-sm">{data.summary}</p>
         </div>
 
@@ -261,12 +261,7 @@ function AnalysisTab() {
   );
 }
 
-function ChatTab() {
-  const [messages, setMessages] = useState([{
-    role: 'assistant',
-    content: "👋 Hi! I'm your AI Finance Assistant powered by Google Gemini. I can help you analyze your spending, suggest saving strategies, and answer any finance questions. What would you like to know?",
-    ts: Date.now()
-  }]);
+function ChatTab({ messages, setMessages }) {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef(null);
@@ -311,7 +306,7 @@ function ChatTab() {
               <p className="font-semibold text-gray-900 text-sm">Gemini Context Interface</p>
               <p className="text-xs text-green-600 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 bg-green-500 rounded-full inline-block" />
-                Runtime context engine: gemini-3.5-flash
+                Runtime context engine: gemini-2.5-flash
               </p>
             </div>
           </div>
@@ -384,13 +379,18 @@ function ChatTab() {
 
 export default function AiAssistantPage() {
   const [tab, setTab] = useState('chat');
+  const [messages, setMessages] = useState([{
+    role: 'assistant',
+    content: "👋 Hi! I'm your AI Finance Assistant powered by Google Gemini. I can help you analyze your spending, suggest saving strategies, and answer any finance questions. What would you like to know?",
+    ts: Date.now()
+  }]);
 
   return (
       <div className="max-w-6xl mx-auto p-4 space-y-6">
         <div>
           <h1 className="text-2xl font-black text-gray-900 flex items-center gap-3">
             AI Assistant 🤖
-            <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-md text-xs font-bold tracking-wide">Gemini 3.5 Flash</span>
+            <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-md text-xs font-bold tracking-wide">Gemini 2.5 Flash</span>
           </h1>
           <p className="text-gray-500 text-sm mt-1">Natively executing deep reasoning over active spending profiles</p>
         </div>
@@ -410,7 +410,7 @@ export default function AiAssistantPage() {
           ))}
         </div>
 
-        {tab === 'chat' && <ChatTab />}
+        {tab === 'chat' && <ChatTab messages={messages} setMessages={setMessages} />}
         {tab === 'analysis' && <AnalysisTab />}
       </div>
   );

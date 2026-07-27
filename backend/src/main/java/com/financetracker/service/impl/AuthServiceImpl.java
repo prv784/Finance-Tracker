@@ -57,6 +57,7 @@ public class AuthServiceImpl {
                 .build();
         User saved = userRepository.save(user);
         seedDefaultCategories(saved);
+        log.info("Generated OTP for {}: {}", saved.getEmail(), otp);
         emailService.sendWelcomeEmail(saved.getEmail(), saved.getFirstName());
         emailService.sendOtpEmail(saved.getEmail(), saved.getFirstName(), otp);
         return AuthResponse.builder().user(toUserResponse(saved)).build();
@@ -118,6 +119,7 @@ public class AuthServiceImpl {
         user.setOtpCode(passwordEncoder.encode(otp));
         user.setOtpExpiryTime(LocalDateTime.now().plusMinutes(10));
         userRepository.save(user);
+        log.info("Resent OTP for {}: {}", user.getEmail(), otp);
         emailService.sendOtpEmail(user.getEmail(), user.getFirstName(), otp);
     }
 

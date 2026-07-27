@@ -12,7 +12,13 @@ public class AppConfig {
 
     @Bean public ModelMapper modelMapper() { return new ModelMapper(); }
 
-    @Bean public RestTemplate restTemplate() { return new RestTemplate(); }
+    @Bean
+    public RestTemplate restTemplate() {
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(10000); // 10 seconds
+        factory.setReadTimeout(30000);    // 30 seconds
+        return new RestTemplate(factory);
+    }
 
     @Bean
     public ObjectMapper objectMapper() {

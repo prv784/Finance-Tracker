@@ -1,5 +1,6 @@
 package com.financetracker.service.impl;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.financetracker.dto.response.AiAnalysisResponse;
@@ -90,7 +91,7 @@ public class GeminiAiService {
                     .healthGrade(healthGrade)
                     .build();
         } catch (Exception e) {
-            log.error("Gemini structured processing exception, rendering standard analysis safety profile: {}", e.getMessage());
+            log.error("Gemini structured processing exception, rendering standard safety fallback: {}", e.getMessage());
             return buildFallbackAnalysis(totalIncome, totalExpenses, categoryData, healthScore, healthGrade);
         }
     }
@@ -105,8 +106,9 @@ public class GeminiAiService {
         BigDecimal expenses = orZero(expenseRepository.sumByUserIdAndDateBetween(user.getId(), start, end));
         BigDecimal savings = income.subtract(expenses);
 
+        // Dynamically referencing geminiModel instead of hardcoding "Gemini 3.5"
         String prompt = """
-                You are a friendly, expert personal finance assistant named FinanceAI, powered by Google Gemini 3.5.
+                You are a friendly, expert personal finance assistant named FinanceAI, powered by Google %s.
                 Give clear, strategic, and practical budget coaching responses. Keep messages clear and accessible.
                 
                 User's current snapshot metrics:
@@ -116,7 +118,7 @@ public class GeminiAiService {
                 - Savings Rate: %s%%
                 
                 User question: %s
-                """.formatted(income, expenses, savings,
+                """.formatted(geminiModel, income, expenses, savings,
                 income.compareTo(BigDecimal.ZERO) > 0
                         ? savings.divide(income, 4, RoundingMode.HALF_UP).multiply(BigDecimal.valueOf(100)).setScale(1, RoundingMode.HALF_UP)
                         : "0.0", userMessage);
@@ -124,8 +126,8 @@ public class GeminiAiService {
         try {
             return callGemini(prompt, false);
         } catch (Exception e) {
-            log.error("Gemini context conversational channel communication exception: {}", e.getMessage());
-            return "I'm having trouble connecting to Gemini AI right now. Your current net savings total is $" + savings + ". Please trace back in a few seconds.";
+            log.error("Gemini context conversational channel exception: {}", e.getMessage());
+            return "I'm having trouble connecting to the AI system right now. Your current net savings total is $" + savings + ". Please trace back in a few seconds.";
         }
     }
 
@@ -156,11 +158,7 @@ public class GeminiAiService {
 
         List<Object[]> categories = expenseRepository.findCategoryWiseSummary(user.getId(), start, end);
         if (categories.isEmpty()) {
-            return List.of(
-                    "Track your daily expenses to identify where your money goes.",
-                    "Set up automatic transfers to a savings account on payday.",
-                    "Follow the 50/30/20 rule: 50% needs, 30% wants, 20% savings."
-            );
+            return getDefaultTips();
         }
 
         String topCategories = categories.stream().limit(5)
@@ -173,23 +171,12 @@ public class GeminiAiService {
                 """.formatted(topCategories);
 
         try {
-            String raw = callGemini(prompt, true).trim();
-            String cleanJson = raw.replaceAll("(?s)```json\\s*", "").replaceAll("(?s)```\\s*", "").trim();
-            JsonNode node = objectMapper.readTree(cleanJson);
-            List<String> tips = new ArrayList<>();
-            if (node.isArray()) {
-                node.forEach(n -> tips.add(n.asText()));
-            }
-            return tips;
+            String raw = callGemini(prompt, true);
+            String cleanJson = cleanMarkdownBlocks(raw);
+            return objectMapper.readValue(cleanJson, new TypeReference<List<String>>() {});
         } catch (Exception e) {
             log.warn("Gemini programmatic parsing tip evaluation exception: {}", e.getMessage());
-            return List.of(
-                    "Reduce dining out — cook at home 3+ times per week.",
-                    "Review subscriptions and cancel unused ones.",
-                    "Use cashback programs when shopping.",
-                    "Batch travel errands to lower transportation costs.",
-                    "Set a weekly discretionary limit and track it daily."
-            );
+            return getDefaultTips();
         }
     }
 
@@ -197,18 +184,22 @@ public class GeminiAiService {
     // GEMINI HTTP ROUTING INTEGRATION
     // ─────────────────────────────────────────────────────────────────────────
     private String callGemini(String prompt, boolean forceJson) {
-        // Clear potential bracket wrappers or hidden markdown parsed components from config URL setup strings
+        if (geminiApiKey == null || geminiApiKey.trim().isEmpty() || geminiApiKey.contains("your_gemini_api_key")) {
+            log.error("Gemini API key is not configured or is a placeholder. Please set a valid GEMINI_API_KEY.");
+            throw new IllegalStateException("Gemini API key is not configured.");
+        }
+
         String cleanBaseUrl = geminiBaseUrl.replaceAll("[\\[\\]\\(\\)]", "").trim();
         if (cleanBaseUrl.contains(" ")) {
             cleanBaseUrl = cleanBaseUrl.split(" ")[0];
         }
 
         String url = cleanBaseUrl + "/" + geminiModel + ":generateContent?key=" + geminiApiKey.trim();
+        String safeUrlLog = cleanBaseUrl + "/" + geminiModel + ":generateContent?key=***";
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
 
-        // Build request body safely with mutable Maps instead of immutable Map.of() entries
         Map<String, Object> textPart = new HashMap<>();
         textPart.put("text", prompt);
 
@@ -229,27 +220,57 @@ public class GeminiAiService {
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
-        try {
-            ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
-            if (response.getStatusCode() != HttpStatus.OK || response.getBody() == null) {
-                throw new RuntimeException("Gemini channel dropped, reporting state code: " + response.getStatusCode());
+        int maxAttempts = 3;
+        int delayMs = 1500;
+        Exception lastException = null;
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                log.info("Attempting Gemini API request (attempt {} of {}) to {}", attempt, maxAttempts, safeUrlLog);
+                ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
+                
+                if (response.getStatusCode() != HttpStatus.OK || response.getBody() == null) {
+                    throw new RuntimeException("Gemini HTTP returned code: " + response.getStatusCode());
+                }
+
+                List<?> candidates = (List<?>) response.getBody().get("candidates");
+                if (candidates == null || candidates.isEmpty()) {
+                    throw new RuntimeException("Empty response payload delivered from Gemini nodes.");
+                }
+
+                Map<?, ?> topCandidate = (Map<?, ?>) candidates.get(0);
+                Map<?, ?> contentMap = (Map<?, ?>) topCandidate.get("content");
+                if (contentMap == null) {
+                    throw new RuntimeException("Missing 'content' field in Gemini top candidate.");
+                }
+                
+                List<?> parts = (List<?>) contentMap.get("parts");
+                if (parts == null || parts.isEmpty()) {
+                    throw new RuntimeException("Missing 'parts' field in Gemini content mapping.");
+                }
+                
+                Map<?, ?> textObj = (Map<?, ?>) parts.get(0);
+                if (textObj == null || !textObj.containsKey("text")) {
+                    throw new RuntimeException("Missing 'text' property in Gemini part index 0.");
+                }
+
+                return (String) textObj.get("text");
+            } catch (Exception e) {
+                log.warn("Gemini connection attempt {} failed: {}", attempt, e.getMessage());
+                lastException = e;
+                if (attempt < maxAttempts) {
+                    try {
+                        Thread.sleep(delayMs * attempt);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException("Gemini call interrupted during backoff retry", ie);
+                    }
+                }
             }
-
-            List<?> candidates = (List<?>) response.getBody().get("candidates");
-            if (candidates == null || candidates.isEmpty()) {
-                throw new RuntimeException("Empty response payloads delivered from Gemini compute framework nodes.");
-            }
-
-            Map<?, ?> topCandidate = (Map<?, ?>) candidates.get(0);
-            Map<?, ?> contentMap = (Map<?, ?>) topCandidate.get("content");
-            List<?> parts = (List<?>) contentMap.get("parts");
-            Map<?, ?> textObj = (Map<?, ?>) parts.get(0);
-
-            return (String) textObj.get("text");
-        } catch (Exception e) {
-            log.error("Failed to complete communication loop with Gemini network services: {}", e.getMessage());
-            throw new RuntimeException("Gemini execution connection error core routing", e);
         }
+        
+        log.error("All {} attempts to call Gemini API failed. Final error message: {}", maxAttempts, lastException != null ? lastException.getMessage() : "Unknown");
+        throw new RuntimeException("All " + maxAttempts + " attempts to call Gemini API failed.", lastException);
     }
 
     private double calculateHealthScore(BigDecimal income, BigDecimal expenses, List<Object[]> categories) {
@@ -297,10 +318,44 @@ public class GeminiAiService {
         return sb.toString();
     }
 
+    private String cleanMarkdownBlocks(String raw) {
+        if (raw == null) return "";
+        raw = raw.trim();
+        
+        // If wrapped in ```json ... ```, extract content
+        if (raw.contains("```json")) {
+            int startIdx = raw.indexOf("```json") + 7;
+            int endIdx = raw.indexOf("```", startIdx);
+            if (endIdx != -1) {
+                return raw.substring(startIdx, endIdx).trim();
+            }
+        } else if (raw.contains("```")) {
+            int startIdx = raw.indexOf("```") + 3;
+            int endIdx = raw.indexOf("```", startIdx);
+            if (endIdx != -1) {
+                return raw.substring(startIdx, endIdx).trim();
+            }
+        }
+        
+        // Otherwise try to find matching braces/brackets to grab the JSON payload
+        int firstBrace = raw.indexOf('{');
+        int lastBrace = raw.lastIndexOf('}');
+        if (firstBrace != -1 && lastBrace != -1 && lastBrace > firstBrace) {
+            return raw.substring(firstBrace, lastBrace + 1);
+        }
+        
+        int firstBracket = raw.indexOf('[');
+        int lastBracket = raw.lastIndexOf(']');
+        if (firstBracket != -1 && lastBracket != -1 && lastBracket > firstBracket) {
+            return raw.substring(firstBracket, lastBracket + 1);
+        }
+        
+        return raw;
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> parseJsonResponse(String raw) throws Exception {
-        String clean = raw.replaceAll("(?s)```json\\s*", "").replaceAll("(?s)```\\s*", "").trim();
-        return objectMapper.readValue(clean, Map.class);
+        return objectMapper.readValue(cleanMarkdownBlocks(raw), Map.class);
     }
 
     @SuppressWarnings("unchecked")
@@ -319,6 +374,14 @@ public class GeminiAiService {
 
     private BigDecimal orZero(BigDecimal value) {
         return value != null ? value : BigDecimal.ZERO;
+    }
+
+    private List<String> getDefaultTips() {
+        return List.of(
+                "Track your daily expenses to identify where your money goes.",
+                "Set up automatic transfers to a savings account on payday.",
+                "Follow the 50/30/20 rule: 50% needs, 30% wants, 20% savings."
+        );
     }
 
     private AiAnalysisResponse buildFallbackAnalysis(BigDecimal income, BigDecimal expenses, List<Object[]> categories, double healthScore, String grade) {
