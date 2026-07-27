@@ -7,9 +7,9 @@ databases:
 services:
   - type: web
     name: finance-tracker-backend
-    env: docker
-    dockerfilePath: Dockerfile
-    dockerContext: backend
+    env: python
+    buildCommand: ./build-render.sh
+    startCommand: export JAVA_HOME="$(pwd)/jdk" && export PATH="$JAVA_HOME/bin:$PATH" && java -jar backend/target/finance-tracker-backend-1.0.0.jar
     plan: free
     envVars:
       - key: DB_HOST
